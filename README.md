@@ -8,6 +8,12 @@
   <em>Turn images into colored ASCII art — with a live preview.</em>
 </p>
 
+<p align="center">
+  <a href="../../releases/latest"><img src="https://img.shields.io/badge/download-asciify--ps.exe-89b4fa?style=flat-square" alt="Download asciify-ps.exe"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-89b4fa?style=flat-square" alt="Windows 10 / 11">
+  <img src="https://img.shields.io/badge/license-MIT-89b4fa?style=flat-square" alt="MIT license">
+</p>
+
 ---
 
 ## What it is
@@ -99,6 +105,10 @@ python asciify_ps.py path\to\image.jpg
 | `Ctrl` + mouse wheel | Zoom the preview |
 
 ## Building the executable yourself
+
+**End users don't need this** — just download `asciify-ps.exe` from the
+[Releases](../../releases) page. This section is only for rebuilding the binary
+from source, e.g. after changing the code.
 
 ```bat
 build-exe.bat
