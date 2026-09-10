@@ -1,48 +1,52 @@
 <p align="center">
-  <img src="docs/screenshot.png" alt="asciify-ps — image to ASCII art GUI" width="880">
+  <img src="docs/screenshot.png" alt="asciify-ps — image to ASCII art GUI" width="900">
 </p>
 
 <h1 align="center">asciify-ps</h1>
 
 <p align="center">
-  <em>A small desktop app that turns images into colored ASCII art — with a live preview.</em>
+  <em>Turn images into colored ASCII art — with a live preview.</em>
 </p>
 
 ---
 
 ## What it is
 
-**asciify-ps** is a Windows desktop GUI (Python + Tkinter) wrapped around the
-[`asciify-them`](https://github.com/ndrscalia/asciify-them) rendering library.
+**asciify-ps** is a small Windows desktop app that converts images into colored
+ASCII art. Pick an image, drag the width slider, and the artwork re-renders as you
+go: switch charset, palette size, colour mode, edge detection or inversion and the
+preview updates in place. When you like what you see, copy it or save it.
 
-Load an image, drag the width slider, and the ASCII rendering updates as you go.
-Tweak the charset, colors, edge detection or inversion and watch the result change
-in real time — then copy it to the clipboard or save it as a text file.
+It is a Tkinter front-end for the [`asciify-them`](https://github.com/ndrscalia/asciify-them)
+rendering library, which is vendored in this repository so the app runs with no
+install step beyond its Python packages.
 
 ## Features
 
-- **Live preview** — the output re-renders automatically (350 ms debounce) as you change any setting.
-- **Width control** — 20–300 columns, via slider or by typing a value.
-- **Color modes** — full color or black & white.
-- **Edge detection** — highlights contours for line-art style output.
-- **Invert** — flips the source image before conversion.
+- **Live preview** — the output re-renders automatically (~300 ms debounce) as you change any setting.
+- **Drag & drop** — drop an image anywhere on the window, or straight onto `asciify-ps.exe`.
+- **Width control** — 20–300 columns, via slider or typed value.
 - **Charset presets** — `default`, `classic`, `extended`, `braille`, `unicode_blocks`.
-- **Three output formats**:
-  | Format | Description |
-  | --- | --- |
-  | **Rice `${cN}`** | Color-quantized palette format. Emits a `(palette c1=R,G,B …)` header plus inline `${cN}` markers, using 2–24 colors picked from the image itself by k-means. |
-  | **True Color** | Raw 24-bit ANSI escape sequences. |
-  | **Plain** | ANSI stripped — plain monochrome text. |
-- **Export** — copy to clipboard or save the current output as `.txt`.
-- Dark theme UI.
+- **Colour and black & white** rendering, with optional **edge detection** and **inversion**.
+- **Four output formats**, including a portable palette format and a classic-ANSI mode for old terminals.
+- **Export** — copy to clipboard, or save as `.txt`, `.ps1` (PowerShell) or `.cmd`.
+- **Preview zoom** — text size 6–22 pt, via the toolbar or `Ctrl` + mouse wheel.
+- Dark theme, high-DPI friendly, no console window.
 
-## Requirements
+## Getting it running
 
-- **Windows** (the UI and the terminal-size detection are Windows-oriented).
-- **Python 3.9+** with `tkinter` (bundled with the official Windows installer).
-- Runtime packages: `numpy`, `opencv-python`, `Pillow` — see `requirements.txt`.
+### Option A — the standalone executable (no Python needed)
 
-## Install and run
+1. Download **`asciify-ps.exe`** from the [Releases](../../releases) page.
+2. Double-click it.
+3. Drag an image onto the window — or onto the `.exe` icon itself.
+
+Nothing to install: the interpreter, the rendering library and OpenCV are all
+bundled inside the single file.
+
+### Option B — from source
+
+Requires **Python 3.9+** (the official Windows installer already includes `tkinter`).
 
 ```bash
 git clone https://github.com/Zenolitee/asciify-ps.git
@@ -51,35 +55,76 @@ pip install -r requirements.txt
 python asciify_ps.py
 ```
 
-On Windows you can also just double-click **`asciify-ps.bat`**, which installs
-nothing but launches the app from its own folder.
+On Windows you can also just double-click **`asciify-ps.bat`**, which launches the
+app from its own folder. You can pass an image straight away:
+
+```bash
+python asciify_ps.py path\to\image.jpg
+```
 
 ## Usage
 
-1. Click **📂 Open** and pick an image (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.webp`, `.gif`).
-2. Adjust **WIDTH**, **Color**, **Charset**, **Output** format and the **Colors**
-   count for the Rice palette. The preview refreshes on its own.
-3. Use **📋 Copy** to put the result on the clipboard, or **💾 Save .txt** to write it out.
+1. Click **Open Image…**, drag an image in, or drop a file onto the executable.
+   Supported: `.png`, `.jpg`, `.jpeg`, `.bmp`, `.webp`, `.gif`, `.tif`, `.tiff`.
+2. Adjust the controls on the left. The preview refreshes on its own:
+   - **Charset** — the character ramp; `braille` gives the smoothest gradients.
+   - **Width** — output width in columns; height follows the aspect ratio.
+   - **Palette** — number of colours used by the Rice format (2–24), picked from the image itself.
+   - **Edges** — overlay contours for a line-art look.
+   - **Invert** — flip light and dark.
+   - **Colors** — full colour or black & white.
+   - **Output format** — see the table below.
+3. Use **Copy** or **Save** to get the result out. The status bar shows the rendered
+   size and how long the conversion took.
 
-Toggle **Edges** for contour highlighting and **Invert** to flip the image.
-The status bar shows the rendered line count.
+### Output formats
+
+| Format | What it produces |
+| --- | --- |
+| **Rice palette `${cN}`** | A `(palette c1=R,G,B …)` header plus inline `${cN}` colour markers, using 2–24 colours quantized from the image. Portable — no ANSI escapes. |
+| **True color** | Raw 24-bit ANSI. Needs a modern true-colour terminal. |
+| **16 colors** | Classic ANSI palette, for `cmd.exe`, `conhost` and older terminals. |
+| **Plain text** | All styling removed — monochrome text. |
+
+### Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+O` | Open an image |
+| `Ctrl+S` | Save as `.txt` |
+| `Ctrl+Shift+C` | Copy the result |
+| `F5` | Re-render |
+| `Ctrl` `+` / `Ctrl` `-` | Zoom the preview |
+| `Ctrl+0` | Reset the zoom |
+| `Ctrl` + mouse wheel | Zoom the preview |
+
+## Building the executable yourself
+
+```bat
+build-exe.bat
+```
+
+This installs PyInstaller and runs `asciify-ps.spec`, producing a single
+`dist\asciify-ps.exe` with the app icon embedded and no console window. The spec
+bundles the vendored library, the icon and the `tkdnd` extension used for
+drag & drop.
 
 ## Project layout
 
 ```
-asciify_ps.py        # the Tkinter GUI application
-asciify-ps.bat       # double-click launcher for Windows
-bring_front.ps1      # optional helper: brings the app window to the foreground
-requirements.txt     # runtime dependencies
-asciify-them/        # vendored rendering library (MIT) — see its LICENSE
+asciify_ps.py         the Tkinter application
+asciify-ps.bat        double-click launcher for a source checkout
+asciify-ps.spec       PyInstaller build recipe
+build-exe.bat         one-click executable build
+bring_front.ps1       optional helper: brings a Python app window to the foreground
+requirements.txt      runtime dependencies
+assets/icon.ico       application icon (window + executable)
+docs/screenshot.png   screenshot used above
+asciify-them/         vendored rendering library (MIT) — see its LICENSE
   ├── LICENSE
   ├── requirements.txt
-  └── src/asciify/   # core, process, renderer, utils, cli
-docs/screenshot.png  # screenshot used above
+  └── src/asciify/    core, process, renderer, utils, cli
 ```
-
-`asciify_ps.py` adds `asciify-them/src` to `sys.path`, so the vendored library
-works with no installation step.
 
 ## Credits
 
@@ -88,6 +133,8 @@ by **Andrea Scalia**, redistributed here under its MIT license. It is itself
 partially based on **[ascii-view](https://github.com/gouwsxander/ascii-view)** by
 Xander Gouws. The vendored copy is included for convenience; its original
 `LICENSE` is kept at `asciify-them/LICENSE`.
+
+Drag & drop is provided by [tkinterdnd2](https://github.com/pmgagne/tkinterdnd2).
 
 ## License
 
