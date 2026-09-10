@@ -1,0 +1,67 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+wheels/
+sdist/
+*.egg-info/
+.eggs/
+downloads/
+eggs/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.envrc
+.venv
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Test / coverage / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+cover/
+.hypothesis/
+
+# Generated output
+*.log
+out/
+output/
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+.spyderproject
+.spyproject
+.ropeproject
+.cursorignore
+.cursorindexingignore
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini

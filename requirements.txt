@@ -1,0 +1,5 @@
+# Runtime dependencies for the asciify-ps GUI.
+# `tkinter` ships with the official Windows Python installer and needs no entry here.
+numpy>=1.24
+opencv-python>=4.8
+pillow>=10.0
