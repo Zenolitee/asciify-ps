@@ -13,6 +13,8 @@ Passing an image path (or dragging a file onto the executable) loads it on start
 from __future__ import annotations
 
 import os
+import json
+import math
 import queue
 import re
 import sys
@@ -23,7 +25,7 @@ from dataclasses import dataclass
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 APP_NAME = "asciify-ps"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 # --------------------------------------------------------------------------
 # Vendored rendering library.
@@ -58,26 +60,25 @@ except Exception:  # pragma: no cover - optional dependency
     DND_AVAILABLE = False
 
 
-# ── palette (Catppuccin Mocha) ────────────────────────────────────────────
-BG = "#1e1e2e"
-BG_ALT = "#181825"
-WIDGET = "#313244"
-BORDER = "#45475a"
-OVERLAY = "#585b70"
-TEXT = "#cdd6f4"
-SUBTEXT = "#bac2de"
-MUTED = "#a6adc8"
-ACCENT = "#89b4fa"
-ACCENT_HOVER = "#9dc1fb"
-ACCENT_PRESS = "#74a0e0"
-PINK = "#f5c2e7"
-PREVIEW_BG = "#11111b"
+# ── Windows 2000 classic palette ──────────────────────────────────────────
+BG = "#d4d0c8"          # Button face
+BG_ALT = "#ffffff"     # Window / input surface
+WIDGET = BG
+BORDER = "#808080"      # Recessed edge
+OVERLAY = "#b5b5b5"
+TEXT = "#000000"
+SUBTEXT = TEXT
+MUTED = "#555555"
+ACCENT = "#0a246a"      # Classic selection blue
+PREVIEW_BG = "#000000"
+PREVIEW_TEXT = "#cdd6f4"
+UI_FONT = ("Tahoma", 9)
 
 WIDTH_MIN, WIDTH_MAX, WIDTH_DEFAULT = 20, 300, 100
 COLORS_MIN, COLORS_MAX, COLORS_DEFAULT = 2, 24, 8
 DEBOUNCE_MS = 300
 FONT_MIN, FONT_MAX = 6, 22
-THUMB_MAX = (240, 170)
+THUMB_MAX = (240, 85)
 
 PREVIEW_FONT_CANDIDATES = ("Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Courier New")
 
@@ -308,7 +309,7 @@ def _sgr_foreground(codes) -> str | None:
             if n in ANSI_16:
                 fg = ANSI_16[n]
             elif n == 0 or n == 39:
-                fg = TEXT
+                fg = PREVIEW_TEXT
         i += 1
     return fg
 
@@ -365,6 +366,40 @@ class RenderSettings:
     edges: bool
     invert: bool
     fmt: str
+    brightness: float = 0
+    contrast: float = 100
+    gamma: float = 1
+    saturation: float = 100
+    edge_sensitivity: float = 100
+
+
+ADJUSTMENTS = {
+    "brightness": ("Brightness", -100, 100, 0),
+    "contrast": ("Contrast (%)", 0, 200, 100),
+    "gamma": ("Gamma", 0.25, 3, 1),
+    "saturation": ("Saturation (%)", 0, 200, 100),
+    "edge_sensitivity": ("Sensitivity (%)", 0, 200, 100),
+}
+
+
+def adjust_image(image, cfg):
+    """Apply tone controls to a copy, leaving the loaded source untouched.
+
+    Gamma uses output = input ** (1 / gamma); higher values lift midtones.
+    """
+    import cv2
+    import numpy as np
+
+    if (cfg.brightness, cfg.contrast, cfg.gamma, cfg.saturation) == (0, 100, 1, 100):
+        return image.copy()
+    pixels = image.astype(np.float32) / 255
+    pixels = np.clip((pixels - 0.5) * (cfg.contrast / 100) + 0.5
+                     + cfg.brightness / 100, 0, 1)
+    pixels = np.power(pixels, 1 / cfg.gamma)
+    if cfg.saturation != 100:
+        gray = cv2.cvtColor(pixels, cv2.COLOR_BGR2GRAY)[..., None]
+        pixels = gray + (pixels - gray) * (cfg.saturation / 100)
+    return np.round(np.clip(pixels, 0, 1) * 255).astype(np.uint8)
 
 
 class AsciiGUI:
@@ -391,6 +426,12 @@ class AsciiGUI:
 
         self.color_mode = tk.StringVar(value="color")
         self.charset_var = tk.StringVar(value="braille")
+        self.custom_enabled = tk.BooleanVar(value=False)
+        self.custom_chars = tk.StringVar(value=" .:-=+*#%@")
+        self.adjustment_vars = {
+            key: tk.DoubleVar(value=spec[3]) for key, spec in ADJUSTMENTS.items()
+        }
+        self.adjustment_labels = {}
         self.edges_var = tk.BooleanVar(value=False)
         self.invert_var = tk.BooleanVar(value=False)
         self.format_var = tk.StringVar(value=FORMAT_LABELS[0])
@@ -430,99 +471,51 @@ class AsciiGUI:
 
     def _setup_style(self):
         style = ttk.Style(self.root)
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-
-        style.configure(".", background=BG, foreground=TEXT, font=("Segoe UI", 10))
+        # The classic theme supplies real raised/sunken edges and square
+        # controls, independent of the host OS's modern native theme.
+        style.theme_use("classic")
+        style.configure(".", background=BG, foreground=TEXT, font=UI_FONT)
         style.configure("TFrame", background=BG)
-        style.configure("TLabel", background=BG, foreground=TEXT, font=("Segoe UI", 10))
-        style.configure("Title.TLabel", background=BG, foreground=PINK,
-                        font=("Segoe UI", 15, "bold"))
-        style.configure("Section.TLabel", background=BG, foreground=ACCENT,
-                        font=("Segoe UI", 9, "bold"))
-        style.configure("Field.TLabel", background=BG, foreground=SUBTEXT,
-                        font=("Segoe UI", 10))
-        style.configure("Muted.TLabel", background=BG, foreground=MUTED,
-                        font=("Segoe UI", 9))
+        style.configure("TLabel", background=BG, foreground=TEXT, font=UI_FONT)
+        style.configure("Title.TLabel", font=("Tahoma", 11, "bold"))
+        style.configure("Section.TLabel", font=("Tahoma", 9, "bold"))
+        style.configure("Field.TLabel", foreground=SUBTEXT)
+        style.configure("Muted.TLabel", foreground=MUTED)
         style.configure("Divider.TFrame", background=BORDER)
+        style.configure("TLabelframe", background=BG, relief="groove", borderwidth=2)
+        style.configure("TLabelframe.Label", background=BG, foreground=TEXT,
+                        font=UI_FONT)
+        style.configure("Toolbar.TFrame", relief="raised", borderwidth=2)
+        style.configure("Status.TLabel", relief="sunken", borderwidth=1,
+                        padding=(5, 3))
 
-        style.configure("TButton", background=WIDGET, foreground=TEXT, borderwidth=0,
-                        focusthickness=0, padding=(12, 7), font=("Segoe UI", 10))
-        style.map("TButton",
-                  background=[("pressed", OVERLAY), ("active", BORDER)],
-                  foreground=[("disabled", MUTED)])
+        for name in ("TButton", "Accent.TButton", "Accent.TMenubutton"):
+            style.configure(name, background=BG, foreground=TEXT,
+                            relief="raised", borderwidth=2, padding=(8, 3),
+                            font=UI_FONT)
+            style.map(name, relief=[("pressed", "sunken")],
+                      foreground=[("disabled", BORDER)],
+                      background=[("active", BG)])
 
-        style.configure("Accent.TButton", background=ACCENT, foreground=BG, borderwidth=0,
-                        focusthickness=0, padding=(14, 7), font=("Segoe UI", 10, "bold"))
-        style.map("Accent.TButton",
-                  background=[("pressed", ACCENT_PRESS), ("active", ACCENT_HOVER)],
-                  foreground=[("disabled", MUTED)])
+        for name in ("TCheckbutton", "TRadiobutton"):
+            style.configure(name, background=BG, foreground=TEXT, font=UI_FONT)
+            style.map(name, background=[("active", BG)],
+                      foreground=[("disabled", BORDER)])
 
-        style.configure("Accent.TMenubutton", background=ACCENT, foreground=BG,
-                        borderwidth=0, padding=(14, 7), arrowcolor=BG,
-                        font=("Segoe UI", 10, "bold"))
-        style.map("Accent.TMenubutton",
-                  background=[("pressed", ACCENT_PRESS), ("active", ACCENT_HOVER)],
-                  foreground=[("disabled", MUTED)])
+        for name in ("TCombobox", "TSpinbox"):
+            style.configure(name, fieldbackground=BG_ALT, background=BG,
+                            foreground=TEXT, arrowcolor=TEXT, padding=(3, 2))
+            style.map(name, fieldbackground=[("disabled", BG), ("readonly", BG_ALT)],
+                      foreground=[("disabled", BORDER), ("readonly", TEXT)],
+                      selectbackground=[("!focus", BG_ALT), ("focus", ACCENT)],
+                      selectforeground=[("!focus", TEXT), ("focus", BG_ALT)])
 
-        style.configure("TCheckbutton", background=BG, foreground=TEXT,
-                        font=("Segoe UI", 10), focusthickness=0)
-        style.map("TCheckbutton",
-                  background=[("active", BG)],
-                  foreground=[("disabled", MUTED)])
-
-        style.configure("TRadiobutton", background=BG, foreground=TEXT,
-                        font=("Segoe UI", 10), focusthickness=0)
-        style.map("TRadiobutton",
-                  background=[("active", BG)],
-                  foreground=[("disabled", MUTED)])
-
-        style.configure("TCombobox", fieldbackground=WIDGET, background=WIDGET,
-                        foreground=TEXT, arrowcolor=TEXT, bordercolor=BORDER,
-                        lightcolor=WIDGET, darkcolor=WIDGET, padding=(6, 4))
-        style.map("TCombobox",
-                  fieldbackground=[("readonly", WIDGET)],
-                  foreground=[("readonly", TEXT)],
-                  selectbackground=[("readonly", WIDGET)],
-                  selectforeground=[("readonly", TEXT)])
-
-        style.configure("TSpinbox", fieldbackground=WIDGET, background=WIDGET,
-                        foreground=TEXT, arrowcolor=TEXT, bordercolor=BORDER,
-                        insertcolor=TEXT, lightcolor=WIDGET, darkcolor=WIDGET,
-                        padding=(4, 3))
-
-        style.configure("TScale", background=ACCENT, troughcolor=WIDGET,
-                        bordercolor=BG, lightcolor=ACCENT, darkcolor=ACCENT,
-                        gripcount=0)
-
-        for orient in ("Vertical", "Horizontal"):
-            name = f"{orient}.TScrollbar"
-            style.configure(name, background=WIDGET, troughcolor=BG_ALT,
-                            bordercolor=BG_ALT, arrowcolor=MUTED,
-                            lightcolor=WIDGET, darkcolor=WIDGET)
-            style.map(name, background=[("active", OVERLAY)])
-
-        # Clam draws its own indicator colours; set them when they exist.
-        for name, opts in (
-            ("TCheckbutton", {"indicatorbackground": BG_ALT,
-                              "indicatorforeground": ACCENT}),
-            ("TRadiobutton", {"indicatorbackground": BG_ALT,
-                              "indicatorforeground": ACCENT}),
-        ):
-            for key, value in opts.items():
-                try:
-                    style.configure(name, **{key: value})
-                except tk.TclError:
-                    pass
-
-        # Combobox dropdown lists are plain Tk widgets, not ttk.
-        self.root.option_add("*TCombobox*Listbox.background", WIDGET)
+        self.root.option_add("*Font", UI_FONT)
+        self.root.option_add("*TCombobox*Listbox.background", BG_ALT)
         self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
         self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
-        self.root.option_add("*TCombobox*Listbox.selectForeground", BG)
-        self.root.option_add("*TCombobox*Listbox.borderWidth", 0)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", BG_ALT)
+        self.root.option_add("*TCombobox*Listbox.borderWidth", 2)
 
     # ── layout ────────────────────────────────────────────────────────────
 
@@ -530,7 +523,7 @@ class AsciiGUI:
         self._build_header()
 
         body = ttk.Frame(self.root)
-        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(4, 8))
+        body.pack(fill=tk.BOTH, expand=True, padx=8, pady=(4, 8))
 
         side = ttk.Frame(body, width=286)
         side.pack(side=tk.LEFT, fill=tk.Y)
@@ -538,7 +531,7 @@ class AsciiGUI:
         self._build_sidebar(side)
 
         ttk.Frame(body, style="Divider.TFrame", width=1).pack(
-            side=tk.LEFT, fill=tk.Y, padx=14
+            side=tk.LEFT, fill=tk.Y, padx=8
         )
 
         right = ttk.Frame(body)
@@ -548,65 +541,78 @@ class AsciiGUI:
         self._build_statusbar()
 
     def _build_header(self):
-        header = ttk.Frame(self.root)
-        header.pack(fill=tk.X, padx=16, pady=(14, 10))
+        header = ttk.Frame(self.root, style="Toolbar.TFrame", padding=(8, 5))
+        header.pack(fill=tk.X, padx=4, pady=(4, 6))
 
         ttk.Label(header, text=APP_NAME, style="Title.TLabel").pack(side=tk.LEFT)
         ttk.Label(
             header, text=f"v{APP_VERSION} · image → colored ASCII art",
             style="Muted.TLabel",
-        ).pack(side=tk.LEFT, padx=(10, 0), pady=(6, 0))
+        ).pack(side=tk.LEFT, padx=(10, 0), pady=(0, 0))
 
         ttk.Button(header, text="Open Image…", style="Accent.TButton",
                    command=self._choose_image).pack(side=tk.RIGHT)
 
     def _section(self, parent, title):
-        wrap = ttk.Frame(parent)
-        wrap.pack(fill=tk.X, pady=(0, 16))
-        ttk.Label(wrap, text=title.upper(), style="Section.TLabel").pack(
-            anchor=tk.W, pady=(0, 8)
-        )
+        wrap = ttk.LabelFrame(parent, text=title, padding=(8, 6))
+        wrap.pack(fill=tk.X, pady=(0, 8))
         grid = ttk.Frame(wrap)
         grid.pack(fill=tk.X)
         grid.columnconfigure(1, weight=1)
         return grid
 
     def _build_sidebar(self, side):
+        notebook = ttk.Notebook(side)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        image_tab = ttk.Frame(notebook, padding=6)
+        render_tab = ttk.Frame(notebook, padding=6)
+        edge_tab = ttk.Frame(notebook, padding=6)
+        notebook.add(image_tab, text="Image")
+        notebook.add(render_tab, text="Characters")
+        notebook.add(edge_tab, text="Edges")
+
         # ── source ──
-        src = self._section(side, "Source")
+        src = self._section(image_tab, "Source")
         self.thumb = tk.Label(
             src, text="Drop an image\nor click Open Image",
-            bg=PREVIEW_BG, fg=MUTED, font=("Segoe UI", 9),
-            width=30, height=9, bd=0, highlightthickness=1,
+            bg=BG_ALT, fg=MUTED, font=UI_FONT,
+            width=30, height=3, bd=2, relief=tk.SUNKEN, highlightthickness=0,
             highlightbackground=BORDER, highlightcolor=ACCENT,
         )
         self.thumb.grid(row=0, column=0, columnspan=2, sticky="nsew")
         self._drop_targets.append(self.thumb)
 
         self.file_label = ttk.Label(src, text="No image loaded", style="Field.TLabel",
-                                    wraplength=270, justify=tk.LEFT)
+                                    wraplength=250, justify=tk.LEFT)
         self.file_label.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
         self.size_label = ttk.Label(src, text="", style="Muted.TLabel")
         self.size_label.grid(row=2, column=0, columnspan=2, sticky=tk.W)
 
         # ── rendering ──
-        grid = self._section(side, "Rendering")
+        # Tone controls operate on the source afresh for every render.
+        adjustments = self._section(image_tab, "Image adjustments")
+        for key in ("brightness", "contrast", "gamma", "saturation"):
+            self._adjustment_control(adjustments, key)
+        ttk.Label(adjustments, text="Gamma above 1 brightens midtones.",
+                  style="Muted.TLabel").pack(anchor=tk.W, pady=(4, 0))
+
+        grid = self._section(render_tab, "Rendering")
 
         ttk.Label(grid, text="Charset", style="Field.TLabel").grid(
-            row=0, column=0, sticky=tk.W, pady=4
+            row=0, column=0, sticky=tk.W, pady=2
         )
         self.charset_box = ttk.Combobox(
             grid, textvariable=self.charset_var, values=list(CHARSET_PRESETS),
             state="readonly", width=12,
         )
-        self.charset_box.grid(row=0, column=1, sticky=tk.EW, pady=4)
+        self.charset_box.grid(row=0, column=1, sticky=tk.EW, pady=2)
         self.charset_box.bind("<<ComboboxSelected>>", lambda *_: self._schedule_convert())
 
         ttk.Label(grid, text="Width", style="Field.TLabel").grid(
-            row=1, column=0, sticky=tk.W, pady=4
+            row=1, column=0, sticky=tk.W, pady=2
         )
         width_box = ttk.Frame(grid)
-        width_box.grid(row=1, column=1, sticky=tk.EW, pady=4)
+        width_box.grid(row=1, column=1, sticky=tk.EW, pady=2)
         self.width_spin = ttk.Spinbox(
             width_box, from_=WIDTH_MIN, to=WIDTH_MAX, width=4,
             justify=tk.CENTER, command=lambda: self._set_width(self.width_spin.get(), "spin"),
@@ -621,10 +627,10 @@ class AsciiGUI:
         self.width_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
 
         ttk.Label(grid, text="Palette", style="Field.TLabel").grid(
-            row=2, column=0, sticky=tk.W, pady=4
+            row=2, column=0, sticky=tk.W, pady=2
         )
         colors_box = ttk.Frame(grid)
-        colors_box.grid(row=2, column=1, sticky=tk.EW, pady=4)
+        colors_box.grid(row=2, column=1, sticky=tk.EW, pady=2)
         self.colors_value = ttk.Label(colors_box, text=str(COLORS_DEFAULT),
                                       style="Muted.TLabel", width=3, anchor=tk.E)
         self.colors_value.pack(side=tk.RIGHT)
@@ -636,23 +642,36 @@ class AsciiGUI:
 
         toggles = ttk.Frame(grid)
         toggles.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(8, 2))
-        ttk.Checkbutton(toggles, text="Edges", variable=self.edges_var,
-                        command=self._schedule_convert).pack(side=tk.LEFT)
         ttk.Checkbutton(toggles, text="Invert", variable=self.invert_var,
                         command=self._schedule_convert).pack(side=tk.LEFT, padx=(16, 0))
 
         ttk.Label(grid, text="Colors", style="Field.TLabel").grid(
-            row=4, column=0, sticky=tk.W, pady=4
+            row=4, column=0, sticky=tk.W, pady=2
         )
         modes = ttk.Frame(grid)
-        modes.grid(row=4, column=1, sticky=tk.W, pady=4)
+        modes.grid(row=4, column=1, sticky=tk.W, pady=2)
         ttk.Radiobutton(modes, text="Full", variable=self.color_mode, value="color",
                         command=self._schedule_convert).pack(side=tk.LEFT)
         ttk.Radiobutton(modes, text="B&W", variable=self.color_mode, value="bw",
                         command=self._schedule_convert).pack(side=tk.LEFT, padx=(12, 0))
 
         # ── output ──
-        out = self._section(side, "Output format")
+        custom = self._section(render_tab, "Custom characters")
+        ttk.Checkbutton(custom, text="Use custom characters", variable=self.custom_enabled,
+                        command=self._schedule_convert).pack(anchor=tk.W)
+        ttk.Entry(custom, textvariable=self.custom_chars).pack(fill=tk.X, pady=4)
+        ttk.Label(custom, text="Order: sparse to dense. Spaces count.\nUse 2–255 single-width characters.",
+                  style="Muted.TLabel").pack(anchor=tk.W)
+        self.custom_chars.trace_add("write", lambda *_: self._schedule_convert())
+
+        edge_controls = self._section(edge_tab, "Edge detection")
+        ttk.Checkbutton(edge_controls, text="Enable edges", variable=self.edges_var,
+                        command=self._schedule_convert).pack(anchor=tk.W, pady=(0, 8))
+        self._adjustment_control(edge_controls, "edge_sensitivity")
+        ttk.Label(edge_controls, text="Higher sensitivity finds more outlines.\n100% keeps the original edge settings.",
+                  style="Muted.TLabel").pack(anchor=tk.W, pady=8)
+
+        out = self._section(render_tab, "Output format")
         self.format_box = ttk.Combobox(
             out, textvariable=self.format_var, values=FORMAT_LABELS,
             state="readonly", width=24,
@@ -660,8 +679,15 @@ class AsciiGUI:
         self.format_box.grid(row=0, column=0, columnspan=2, sticky=tk.EW)
         self.format_box.bind("<<ComboboxSelected>>", lambda *_: self._on_format_change())
         self.format_hint = ttk.Label(out, text="", style="Muted.TLabel",
-                                     wraplength=270, justify=tk.LEFT)
+                                     wraplength=250, justify=tk.LEFT)
         self.format_hint.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(6, 0))
+
+        presets = ttk.Frame(side)
+        presets.pack(fill=tk.X, pady=(6, 0))
+        ttk.Button(presets, text="Load preset...", command=self._load_preset).pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(presets, text="Save preset...", command=self._save_preset).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
 
         # ── defaults ──
         ttk.Button(side, text="Reset to defaults", command=self._reset).pack(
@@ -672,10 +698,30 @@ class AsciiGUI:
         self.colors_scale.set(COLORS_DEFAULT)
         self._update_format_hint()
 
+    def _adjustment_control(self, parent, key):
+        label, low, high, default = ADJUSTMENTS[key]
+        row = ttk.Frame(parent)
+        row.pack(fill=tk.X, pady=3)
+        ttk.Label(row, text=label).pack(side=tk.LEFT)
+        value = ttk.Label(row, width=5, anchor=tk.E)
+        value.pack(side=tk.RIGHT)
+        self.adjustment_labels[key] = value
+        scale = ttk.Scale(parent, from_=low, to=high,
+                          variable=self.adjustment_vars[key])
+        scale.pack(fill=tk.X)
+
+        def changed(*_):
+            number = self.adjustment_vars[key].get()
+            value.configure(text=f"{number:.2f}" if key == "gamma" else f"{number:.0f}")
+            self._schedule_convert()
+
+        self.adjustment_vars[key].trace_add("write", changed)
+        value.configure(text=f"{default:.2f}" if key == "gamma" else str(default))
+
     def _build_preview(self, parent):
         bar = ttk.Frame(parent)
         bar.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(bar, text="PREVIEW", style="Section.TLabel").pack(side=tk.LEFT)
+        ttk.Label(bar, text="ASCII preview", style="Section.TLabel").pack(side=tk.LEFT)
 
         self.zoom_in = ttk.Button(bar, text="+", width=3, command=lambda: self._zoom(1))
         self.zoom_in.pack(side=tk.RIGHT)
@@ -695,9 +741,9 @@ class AsciiGUI:
             self._font_size,
         )
         self.preview = tk.Text(
-            wrap, bg=PREVIEW_BG, fg=TEXT, font=self.preview_font, wrap=tk.NONE,
-            insertbackground=TEXT, selectbackground=OVERLAY, selectforeground=TEXT,
-            bd=0, highlightthickness=1, highlightbackground=BORDER,
+            wrap, bg=PREVIEW_BG, fg=PREVIEW_TEXT, font=self.preview_font, wrap=tk.NONE,
+            insertbackground=PREVIEW_TEXT, selectbackground=ACCENT, selectforeground=BG_ALT,
+            bd=2, relief=tk.SUNKEN, highlightthickness=1, highlightbackground=BORDER,
             highlightcolor=BORDER, padx=10, pady=8, state=tk.DISABLED,
         )
         self.preview.grid(row=0, column=0, sticky="nsew")
@@ -714,8 +760,8 @@ class AsciiGUI:
         ttk.Button(actions, text="Copy", command=self._copy).pack(side=tk.LEFT)
 
         save = ttk.Menubutton(actions, text="Save", style="Accent.TMenubutton")
-        menu = tk.Menu(save, tearoff=False, bg=WIDGET, fg=TEXT, bd=0,
-                       activebackground=ACCENT, activeforeground=BG,
+        menu = tk.Menu(save, tearoff=False, bg=WIDGET, fg=TEXT, bd=2, relief=tk.RAISED,
+                       activebackground=ACCENT, activeforeground=BG_ALT,
                        activeborderwidth=0)
         menu.add_command(label="Text file  (.txt)", command=self._save_txt)
         menu.add_command(label="PowerShell script  (.ps1)", command=self._save_ps1)
@@ -728,10 +774,10 @@ class AsciiGUI:
         bar.pack(fill=tk.X, side=tk.BOTTOM)
         ttk.Frame(bar, style="Divider.TFrame", height=1).pack(fill=tk.X)
         inner = ttk.Frame(bar)
-        inner.pack(fill=tk.X, padx=16, pady=(6, 8))
-        ttk.Label(inner, textvariable=self.status_var, style="Muted.TLabel").pack(side=tk.LEFT)
+        inner.pack(fill=tk.X, padx=4, pady=4)
+        ttk.Label(inner, textvariable=self.status_var, style="Status.TLabel").pack(side=tk.LEFT, fill=tk.X, expand=True)
         hint = "Ctrl+O open · Ctrl+S save · Ctrl+Shift+C copy · F5 redraw"
-        ttk.Label(inner, text=hint, style="Muted.TLabel").pack(side=tk.RIGHT)
+        ttk.Label(inner, text=hint, style="Status.TLabel").pack(side=tk.RIGHT, padx=(4, 0))
 
     def _pick_font(self) -> str:
         try:
@@ -804,12 +850,108 @@ class AsciiGUI:
         return RenderSettings(
             width=self._width,
             colors=self._colors,
-            charset=CHARSET_PRESETS.get(self.charset_var.get(), DEFAULT_CHARSET),
+            charset=self._selected_charset(),
             color_mode=self.color_mode.get(),
             edges=bool(self.edges_var.get()),
             invert=bool(self.invert_var.get()),
             fmt=self._format_key(),
+            **{key: var.get() for key, var in self.adjustment_vars.items()},
         )
+
+    def _selected_charset(self):
+        if not self.custom_enabled.get():
+            return CHARSET_PRESETS.get(self.charset_var.get(), DEFAULT_CHARSET)
+        import unicodedata
+        chars = self.custom_chars.get()
+        if not 2 <= len(chars) <= 255 or any(
+            unicodedata.category(ch).startswith("C") or unicodedata.category(ch).startswith("M")
+            or unicodedata.east_asian_width(ch) in ("W", "F") for ch in chars
+        ):
+            raise ValueError("Use 2–255 single-width characters; no tabs or line breaks.")
+        return chars
+
+    def _save_preset(self):
+        try:
+            self._snapshot()  # Validate before saving.
+        except ValueError as exc:
+            messagebox.showerror(APP_NAME, str(exc))
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".json",
+                    filetypes=[("ASCII presets", "*.json")])
+        if not path:
+            return
+        settings = {
+            "width": self._width, "colors": self._colors,
+            "charset": self.charset_var.get(), "custom_enabled": self.custom_enabled.get(),
+            "custom_chars": self.custom_chars.get(), "color_mode": self.color_mode.get(),
+            "edges": self.edges_var.get(), "invert": self.invert_var.get(),
+            "format": self._format_key(),
+            **{key: var.get() for key, var in self.adjustment_vars.items()},
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"app": APP_NAME, "version": 1, "settings": settings}, handle,
+                          ensure_ascii=False, indent=2)
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"Could not save preset.\n\n{exc}")
+            return
+        self._set_status(f"Saved preset: {os.path.basename(path)}")
+
+    def _load_preset(self):
+        path = filedialog.askopenfilename(filetypes=[("ASCII presets", "*.json")])
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+            self._apply_preset(data)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            messagebox.showerror(APP_NAME, f"Could not load preset.\n\n{exc}")
+            return
+        self._set_status(f"Loaded preset: {os.path.basename(path)}")
+
+    def _apply_preset(self, data):
+        # Validate the complete file before changing any controls.
+        if not isinstance(data, dict) or data.get("app") != APP_NAME or data.get("version") != 1:
+            raise ValueError("This is not a supported asciify-ps preset.")
+        values = data.get("settings")
+        if not isinstance(values, dict):
+            raise ValueError("Preset settings are missing.")
+        limits = {"width": (WIDTH_MIN, WIDTH_MAX), "colors": (COLORS_MIN, COLORS_MAX),
+                  **{key: (spec[1], spec[2]) for key, spec in ADJUSTMENTS.items()}}
+        for key, (low, high) in limits.items():
+            number = values[key]
+            if type(number) not in (int, float) or not math.isfinite(number) or not low <= number <= high:
+                raise ValueError(f"Invalid preset value: {key}")
+            if key in ("width", "colors") and int(number) != number:
+                raise ValueError(f"{key} must be a whole number.")
+        for key in ("custom_enabled", "edges", "invert"):
+            if type(values[key]) is not bool:
+                raise ValueError(f"Invalid preset value: {key}")
+        if any(not isinstance(values[key], str) for key in ("charset", "color_mode", "format")) or values["charset"] not in CHARSET_PRESETS or values["color_mode"] not in ("color", "bw") or values["format"] not in FORMAT_BY_LABEL.values():
+            raise ValueError("Unknown charset, color mode, or output format.")
+        chars = values["custom_chars"]
+        import unicodedata
+        if not isinstance(chars, str) or (values["custom_enabled"] and (
+            not 2 <= len(chars) <= 255 or any(
+                unicodedata.category(ch).startswith(("C", "M")) or
+                unicodedata.east_asian_width(ch) in ("W", "F") for ch in chars
+            )
+        )):
+            raise ValueError("Invalid custom characters in preset.")
+        self._set_width(int(values["width"]), "init")
+        self.colors_scale.set(values["colors"])
+        self.charset_var.set(values["charset"])
+        self.custom_chars.set(chars)
+        self.custom_enabled.set(values["custom_enabled"])
+        self.color_mode.set(values["color_mode"])
+        self.edges_var.set(values["edges"])
+        self.invert_var.set(values["invert"])
+        self.format_var.set(next(label for label, key in OUTPUT_FORMATS if key == values["format"]))
+        for key, var in self.adjustment_vars.items():
+            var.set(values[key])
+        self._update_format_hint()
+        self._schedule_convert()
 
     def _report_callback_exception(self, exc, value, tb):
         self._set_status(f"Error: {value}")
@@ -906,7 +1048,7 @@ class AsciiGUI:
                                  height=img.height)
         except Exception:
             self._thumb_photo = None
-            self.thumb.configure(image="", text="(no preview)", width=30, height=9)
+            self.thumb.configure(image="", text="(no preview)", width=30, height=3)
 
     # ── conversion ────────────────────────────────────────────────────────
 
@@ -923,9 +1065,14 @@ class AsciiGUI:
             return
         self._job_id += 1
         job = self._job_id
+        try:
+            settings = self._snapshot()
+        except ValueError as exc:
+            self._set_status(str(exc))
+            return
         self._set_status("Converting…")
         threading.Thread(
-            target=self._worker, args=(job, self._snapshot()), daemon=True
+            target=self._worker, args=(job, settings), daemon=True
         ).start()
 
     def _worker(self, job, cfg: RenderSettings):
@@ -939,7 +1086,7 @@ class AsciiGUI:
                 term_height=height, term_width=cfg.width,
                 keep_aspect_ratio=True, f_type="in_terminal",
             )
-            ds_img = proc.downsample_image(f=ds_factor, keep_aspect_ratio=True)
+            ds_img = adjust_image(proc.downsample_image(f=ds_factor, keep_aspect_ratio=True), cfg)
             if cfg.invert:
                 ds_img = 255 - ds_img
             img_hsv = proc.convert_to_hsv(image=ds_img)
@@ -947,7 +1094,11 @@ class AsciiGUI:
             edges = angles = None
             if cfg.edges:
                 angles = proc.calculate_angles(image=ds_img)
-                edges = proc.detect_edges(image=ds_img)
+                # Lower Canny thresholds as sensitivity increases; 100% is
+                # byte-for-byte compatible with the original (200, 300).
+                factor = 2 ** ((100 - cfg.edge_sensitivity) / 50)
+                edges = proc.detect_edges(image=ds_img,
+                                          canny_thresh=(200 * factor, 300 * factor))
 
             renderer = Renderer(color_mode=cfg.color_mode, charset=cfg.charset)
             if edges is not None:
@@ -1046,14 +1197,14 @@ class AsciiGUI:
                     cur_tag = m.group(1)
                 elif part:
                     tag = f"rice_{cur_tag or 'default'}"
-                    self.preview.tag_configure(tag, foreground=palette.get(cur_tag, TEXT))
+                    self.preview.tag_configure(tag, foreground=palette.get(cur_tag, PREVIEW_TEXT))
                     self.preview.insert(tk.END, part, tag)
             self.preview.insert(tk.END, "\n")
 
     def _insert_ansi(self, text):
         """Insert ANSI text, caching one tag per distinct colour."""
         tag_cache = {}
-        fg = TEXT
+        fg = PREVIEW_TEXT
         for part in re.split(r"(\033\[[0-9;]*m)", text):
             m = re.match(r"\033\[(\d+(?:;\d+)*)m", part)
             if m:
@@ -1078,6 +1229,10 @@ class AsciiGUI:
         self.colors_scale.set(COLORS_DEFAULT)
         self._on_colors_scale(str(COLORS_DEFAULT))
         self.charset_var.set("braille")
+        self.custom_enabled.set(False)
+        self.custom_chars.set(" .:-=+*#%@")
+        for key, var in self.adjustment_vars.items():
+            var.set(ADJUSTMENTS[key][3])
         self.color_mode.set("color")
         self.edges_var.set(False)
         self.invert_var.set(False)
