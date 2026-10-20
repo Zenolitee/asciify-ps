@@ -67,8 +67,8 @@ class Renderer:
         h, s, v = pixel
         r, g, b = self.hsv_to_rgb(h, s, v)
 
-        v_steps = list(range(0, 256, 255 // len(self.charset)))
-        v_steps.pop(0)
+        # One threshold per character, including custom ramps of any length.
+        v_steps = np.linspace(0, 255, len(self.charset) + 1)[1:].astype(int)
         v_steps[-1] = 255
 
         for index, step in enumerate(v_steps):

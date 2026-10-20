@@ -31,13 +31,17 @@ install step beyond its Python packages.
 
 - **Live preview** — the output re-renders automatically (~300 ms debounce) as you change any setting.
 - **Drag & drop** — drop an image anywhere on the window, or straight onto `asciify-ps.exe`.
+- **Image adjustments** — brightness, contrast, gamma, and saturation sliders with live updates.
+- **Adjustable edges** — sensitivity control for stronger or subtler outlines.
+- **Custom characters** — enter your own sparse-to-dense character ramp.
+- **Saved presets** — save and load rendering settings as portable JSON files.
 - **Width control** — 20–300 columns, via slider or typed value.
 - **Charset presets** — `default`, `classic`, `extended`, `braille`, `unicode_blocks`.
 - **Colour and black & white** rendering, with optional **edge detection** and **inversion**.
 - **Four output formats**, including a portable palette format and a classic-ANSI mode for old terminals.
 - **Export** — copy to clipboard, or save as `.txt`, `.ps1` (PowerShell) or `.cmd`.
 - **Preview zoom** — text size 6–22 pt, via the toolbar or `Ctrl` + mouse wheel.
-- Dark theme, high-DPI friendly, no console window.
+- Windows 2000 inspired classic UI: beveled controls, framed settings, and a dark ASCII canvas. High-DPI friendly, no console window.
 
 ## Getting it running
 
@@ -72,16 +76,25 @@ python asciify_ps.py path\to\image.jpg
 
 1. Click **Open Image…**, drag an image in, or drop a file onto the executable.
    Supported: `.png`, `.jpg`, `.jpeg`, `.bmp`, `.webp`, `.gif`, `.tif`, `.tiff`.
-2. Adjust the controls on the left. The preview refreshes on its own:
+2. Adjust the controls in the **Image**, **Characters**, and **Edges** tabs. The preview refreshes on its own:
    - **Charset** — the character ramp; `braille` gives the smoothest gradients.
    - **Width** — output width in columns; height follows the aspect ratio.
    - **Palette** — number of colours used by the Rice format (2–24), picked from the image itself.
-   - **Edges** — overlay contours for a line-art look.
+   - **Brightness / contrast / saturation** — adjust tone and color intensity. Defaults are 0, 100%, and 100%.
+   - **Gamma** — adjust midtones (0.25–3); values above 1 brighten them. Default: 1.
+   - **Custom characters** — enable your own ramp of 2–255 single-width characters, ordered from sparse to dense. Spaces and repeated characters are preserved.
+   - **Edges** — overlay contours for a line-art look; higher sensitivity finds more outlines. 100% retains the original detection settings.
    - **Invert** — flip light and dark.
    - **Colors** — full colour or black & white.
    - **Output format** — see the table below.
 3. Use **Copy** or **Save** to get the result out. The status bar shows the rendered
    size and how long the conversion took.
+
+Use **Save preset...** to keep the current conversion settings in a named `.json` file,
+and **Load preset...** to reuse them with another image. Presets include image adjustments,
+characters, width, palette, color mode, edges, inversion, and output format; they do not
+include the source image or preview zoom. Invalid presets are rejected without changing
+your settings. **Reset to defaults** restores all conversion controls and preview zoom.
 
 ### Output formats
 
